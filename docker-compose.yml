@@ -1,0 +1,11 @@
+services:
+  resources-mcp:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data:ro
+    environment:
+      DATA_DIR: /data
+      RECURSIVE: "true"
+    restart: unless-stopped
