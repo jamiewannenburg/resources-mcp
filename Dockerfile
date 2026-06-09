@@ -14,11 +14,11 @@ COPY server.py search_tools.py .
 RUN mkdir -p /data
 
 ENV DATA_DIR=/data
-ENV MCP_TRANSPORT=streamable-http
-ENV HOST=0.0.0.0
-ENV PORT=8000
 ENV RECURSIVE=true
+ENV FASTMCP_HOST=0.0.0.0
+ENV FASTMCP_PORT=8000
+ENV FASTMCP_TRANSPORT=streamable-http
 
 EXPOSE 8000
 
-CMD ["python", "server.py"]
+CMD ["sh", "-c", "exec uvicorn server:app --host \"$FASTMCP_HOST\" --port \"$FASTMCP_PORT\""]

@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastmcp import FastMCP
+from fastmcp import FastMCP, settings as fastmcp_settings
 from fastmcp.resources import FileResource
 from mcp.types import Resource as SDKResource
 from pydantic import Field
@@ -17,9 +17,6 @@ from typing_extensions import override
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 RECURSIVE = os.environ.get("RECURSIVE", "true").lower() in {"1", "true", "yes"}
-HOST = os.environ.get("HOST", "0.0.0.0")
-PORT = int(os.environ.get("PORT", "8000"))
-TRANSPORT = os.environ.get("MCP_TRANSPORT", "streamable-http")
 
 TEXT_MIME_PREFIXES = ("text/",)
 TEXT_MIME_TYPES = {
@@ -127,7 +124,20 @@ register_search_tools(mcp, DATA_DIR, _safe_resolve)
 
 registered_files = register_file_resources()
 
+_http_transport = fastmcp_settings.transport
+if _http_transport not in ("http", "streamable-http", "sse"):
+    _http_transport = "streamable-http"
+
+app = mcp.http_app(transport=_http_transport)
+
 
 if __name__ == "__main__":
+    import uvicorn
+
     print(f"Serving {registered_files} file(s) from {DATA_DIR}")
-    mcp.run(transport=TRANSPORT, host=HOST, port=PORT)
+    uvicorn.run(
+        "server:app",
+        host=fastmcp_settings.host,
+        port=fastmcp_settings.port,
+        log_level=fastmcp_settings.log_level.lower(),
+    )
