@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import mimetypes
 import os
 from pathlib import Path
+from typing import Any
 
 from fastmcp import FastMCP
-from fastmcp.resources import DirectoryResource, FileResource
+from fastmcp.resources import FileResource
+from mcp.types import Resource as SDKResource
+from pydantic import Field
+from search_tools import register_search_tools
+from typing_extensions import override
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 RECURSIVE = os.environ.get("RECURSIVE", "true").lower() in {"1", "true", "yes"}
@@ -25,6 +31,18 @@ TEXT_MIME_TYPES = {
 }
 
 mcp = FastMCP("resources-mcp")
+
+
+class SizedFileResource(FileResource):
+    """FileResource that exposes byte size in resources/list responses."""
+
+    size: int = Field(description="File size in bytes")
+
+    @override
+    def to_mcp_resource(self, **overrides: Any) -> SDKResource:
+        return super().to_mcp_resource(**overrides).model_copy(
+            update={"size": overrides.get("size", self.size)}
+        )
 
 
 def _guess_mime(path: Path) -> str:
@@ -53,29 +71,39 @@ def _iter_files() -> list[Path]:
     return sorted(path for path in iterator if path.is_file())
 
 
+def _file_entries() -> list[dict[str, str | int]]:
+    entries: list[dict[str, str | int]] = []
+    for file_path in _iter_files():
+        rel = file_path.relative_to(DATA_DIR).as_posix()
+        entries.append({"path": rel, "size": file_path.stat().st_size})
+    return entries
+
+
+@mcp.resource(
+    "resource://data",
+    name="Data directory listing",
+    description="JSON listing of all files in the mounted /data directory.",
+    mime_type="application/json",
+)
+def data_directory_listing() -> str:
+    return json.dumps({"files": _file_entries()}, indent=2)
+
+
 def register_file_resources() -> int:
     """Register each file under DATA_DIR as an MCP resource."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-    listing = DirectoryResource(
-        uri="resource://data",
-        path=DATA_DIR,
-        name="Data directory listing",
-        description="JSON listing of all files in the mounted /data directory.",
-        recursive=RECURSIVE,
-    )
-    mcp.add_resource(listing)
 
     count = 0
     for file_path in _iter_files():
         rel = file_path.relative_to(DATA_DIR).as_posix()
         mcp.add_resource(
-            FileResource(
+            SizedFileResource(
                 uri=f"data://files/{rel}",
                 path=file_path,
                 name=rel,
                 description=f"File in /data: {rel}",
                 mime_type=_guess_mime(file_path),
+                size=file_path.stat().st_size,
             )
         )
         count += 1
@@ -94,6 +122,8 @@ def read_file(filepath: str) -> str | bytes:
         return target.read_text(encoding="utf-8", errors="replace")
     return target.read_bytes()
 
+
+register_search_tools(mcp, DATA_DIR, _safe_resolve)
 
 registered_files = register_file_resources()
 
