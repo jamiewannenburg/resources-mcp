@@ -2,7 +2,7 @@
 
 A [FastMCP](https://gofastmcp.com) server that exposes files from a mounted data directory as MCP resources, with search tools for text files and PDFs. Designed to run in Docker so agents can browse, read, and search your documents over the Model Context Protocol.
 
-Published image: [`jamiewannenburg/resources-mcp`](https://hub.docker.com/r/jamiewannenburg/resources-mcp) on Docker Hub.
+Published image: [`jamiewannenburg/resource-mcp`](https://hub.docker.com/r/jamiewannenburg/resource-mcp) on Docker Hub.
 
 ## What it provides
 
@@ -32,7 +32,7 @@ All paths are constrained to the data directory; path traversal is rejected.
 2. Start the server (using the published image):
 
    ```bash
-   docker run --rm -p 8000:8000 -v "$(pwd)/data:/data:ro" jamiewannenburg/resources-mcp:latest
+   docker run --rm -p 8000:8000 -v "$(pwd)/data:/data:ro" jamiewannenburg/resource-mcp:latest
    ```
 
    Or build locally with Compose:
@@ -51,13 +51,13 @@ The default compose file mounts `./data` read-only at `/data` inside the contain
 
 ## Docker
 
-Pre-built image: [hub.docker.com/r/jamiewannenburg/resources-mcp](https://hub.docker.com/r/jamiewannenburg/resources-mcp)
+Pre-built image: [hub.docker.com/r/jamiewannenburg/resource-mcp](https://hub.docker.com/r/jamiewannenburg/resource-mcp)
 
 ### Pull and run
 
 ```bash
-docker pull jamiewannenburg/resources-mcp:latest
-docker run --rm -p 8000:8000 -v "$(pwd)/data:/data:ro" jamiewannenburg/resources-mcp:latest
+docker pull jamiewannenburg/resource-mcp:latest
+docker run --rm -p 8000:8000 -v "$(pwd)/data:/data:ro" jamiewannenburg/resource-mcp:latest
 ```
 
 ### Run with Compose (published image)
@@ -65,7 +65,7 @@ docker run --rm -p 8000:8000 -v "$(pwd)/data:/data:ro" jamiewannenburg/resources
 ```yaml
 services:
   resources-mcp:
-    image: jamiewannenburg/resources-mcp:latest
+    image: jamiewannenburg/resource-mcp:latest
     ports:
       - "8000:8000"
     volumes:
@@ -85,6 +85,46 @@ docker compose up --build -d
 docker build -t resources-mcp .
 docker run --rm -p 8000:8000 -v "$(pwd)/data:/data:ro" resources-mcp
 ```
+
+### Publishing to Docker Hub
+
+These are the steps used to publish `jamiewannenburg/resource-mcp:latest` after code changes (including the `NAMESPACE` support).
+
+1. **Confirm Docker Desktop is running** (Linux). The daemon should respond:
+
+   ```bash
+   docker info
+   ```
+
+   If the socket is unreachable, start Docker Desktop and wait until `docker info` succeeds:
+
+   ```bash
+   docker desktop start
+   ```
+
+2. **Run tests** from the project virtualenv:
+
+   ```bash
+   ./venv/bin/pytest
+   ```
+
+3. **Build** the image from the repository root:
+
+   ```bash
+   docker build -t jamiewannenburg/resource-mcp:latest .
+   ```
+
+4. **Push** to Docker Hub (log in first with `docker login` if needed):
+
+   ```bash
+   docker push jamiewannenburg/resource-mcp:latest
+   ```
+
+5. **Push source** to GitHub when there are committed changes:
+
+   ```bash
+   git push origin main
+   ```
 
 ### Mount a different directory
 
