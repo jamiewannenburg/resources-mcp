@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP, settings as fastmcp_settings
 from fastmcp.resources import FileResource
+from fastmcp.server.transforms.namespace import Namespace
 from mcp.types import Resource as SDKResource
 from pydantic import Field
 from search_tools import register_search_tools
@@ -17,6 +19,23 @@ from typing_extensions import override
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 RECURSIVE = os.environ.get("RECURSIVE", "true").lower() in {"1", "true", "yes"}
+
+
+def _read_namespace() -> str | None:
+    """Read optional namespace from NAMESPACE env or --namespace CLI flag."""
+    for index, arg in enumerate(sys.argv):
+        if arg in ("--namespace", "-n") and index + 1 < len(sys.argv):
+            value = sys.argv[index + 1].strip()
+            return value or None
+        if arg.startswith("--namespace="):
+            value = arg.split("=", 1)[1].strip()
+            return value or None
+
+    value = os.environ.get("NAMESPACE", "").strip()
+    return value or None
+
+
+NAMESPACE = _read_namespace()
 
 TEXT_MIME_PREFIXES = ("text/",)
 TEXT_MIME_TYPES = {
@@ -124,6 +143,9 @@ register_search_tools(mcp, DATA_DIR, _safe_resolve)
 
 registered_files = register_file_resources()
 
+if NAMESPACE:
+    mcp.add_transform(Namespace(NAMESPACE))
+
 _http_transport = fastmcp_settings.transport
 if _http_transport not in ("http", "streamable-http", "sse"):
     _http_transport = "streamable-http"
@@ -134,7 +156,8 @@ app = mcp.http_app(transport=_http_transport)
 if __name__ == "__main__":
     import uvicorn
 
-    print(f"Serving {registered_files} file(s) from {DATA_DIR}")
+    namespace_note = f" (namespace: {NAMESPACE})" if NAMESPACE else ""
+    print(f"Serving {registered_files} file(s) from {DATA_DIR}{namespace_note}")
     uvicorn.run(
         "server:app",
         host=fastmcp_settings.host,

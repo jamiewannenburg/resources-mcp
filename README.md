@@ -98,10 +98,11 @@ volumes:
 
 ### Application settings
 
-| Variable    | Default | Description                                      |
-| ----------- | ------- | ------------------------------------------------ |
-| `DATA_DIR`  | `/data` | Directory whose files are exposed as resources   |
-| `RECURSIVE` | `true`  | Include subdirectories when listing and indexing |
+| Variable     | Default | Description                                      |
+| ------------ | ------- | ------------------------------------------------ |
+| `DATA_DIR`   | `/data` | Directory whose files are exposed as resources   |
+| `RECURSIVE`  | `true`  | Include subdirectories when listing and indexing |
+| `NAMESPACE`  | *(none)* | Prefix tools and resource URIs to avoid name clashes when multiple MCP servers are combined |
 
 ### FastMCP settings
 
@@ -130,6 +131,29 @@ environment:
 ```
 
 `FASTMCP_HOST` and `FASTMCP_PORT` control where uvicorn listens. Other `FASTMCP_*` variables are read when the ASGI app is created at import time.
+
+### Namespacing (avoiding name clashes)
+
+When this server is used alongside others that expose generic names like `grep`, set a namespace so tools and resources are prefixed. FastMCP has no `FASTMCP_*` setting for this; the server uses FastMCP's built-in [`Namespace`](https://gofastmcp.com/servers/transforms/namespace) transform.
+
+| With `NAMESPACE=nas` | Exposed name / URI |
+| -------------------- | ------------------ |
+| Tool `grep`          | `nas_grep`         |
+| Tool `pdfgrep`       | `nas_pdfgrep`      |
+| Resource listing     | `resource://nas/data` |
+| File resource        | `data://nas/files/{path}` |
+
+Set via environment variable (works with Docker / uvicorn):
+
+```bash
+export NAMESPACE=nas
+```
+
+Or when running `python server.py` directly:
+
+```bash
+python server.py --namespace nas
+```
 
 ## Connecting MCP clients
 

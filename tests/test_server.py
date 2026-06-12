@@ -103,7 +103,70 @@ async def test_server_exposes_search_tools() -> None:
     tools = await server.mcp.list_tools()
     names = {tool.name for tool in tools}
 
-    assert {"grep", "pdfgrep"} <= names
+    if server.NAMESPACE:
+        prefix = f"{server.NAMESPACE}_"
+        assert {f"{prefix}grep", f"{prefix}pdfgrep"} <= names
+    else:
+        assert {"grep", "pdfgrep"} <= names
+
+
+@pytest.mark.usefixtures("require_rg")
+async def test_mount_server_with_namespace() -> None:
+    if server.NAMESPACE:
+        pytest.skip("server module already applies its own namespace transform")
+
+    from fastmcp import Client, FastMCP
+
+    main = FastMCP("main")
+    main.mount(server.mcp, namespace="nas")
+
+    tools = await main.list_tools()
+    tool_names = {tool.name for tool in tools}
+    assert {"nas_grep", "nas_pdfgrep"} <= tool_names
+    assert "grep" not in tool_names
+    assert "pdfgrep" not in tool_names
+
+    resources = await main.list_resources()
+    uris = {str(resource.uri) for resource in resources}
+    assert "resource://nas/data" in uris
+    assert any(uri.startswith("data://nas/files/") for uri in uris)
+
+    templates = await main.list_resource_templates()
+    assert "data://nas/files/{filepath*}" in {t.uri_template for t in templates}
+
+    async with Client(main) as client:
+        listing = await client.read_resource("resource://nas/data")
+        assert "hello.txt" in listing[0].text
+
+        file_content = await client.read_resource("data://nas/files/hello.txt")
+        assert "resources-mcp" in file_content[0].text
+
+        grep_output = await client.call_tool(
+            "nas_grep", {"pattern": "resources-mcp"}
+        )
+        assert "hello.txt" in grep_output.content[0].text
+        assert "resources-mcp" in grep_output.content[0].text
+
+
+async def test_namespace_prefixes_tools_and_resources(populated_data_dir: Path) -> None:
+    from fastmcp import FastMCP
+    from fastmcp.server.transforms.namespace import Namespace
+
+    from search_tools import register_search_tools
+    from tests.conftest import make_safe_resolve
+
+    mcp = FastMCP("test-namespace", transforms=[Namespace("nas")])
+    register_search_tools(mcp, populated_data_dir, make_safe_resolve(populated_data_dir))
+
+    @mcp.resource("resource://data")
+    def listing() -> str:
+        return "[]"
+
+    tools = await mcp.list_tools()
+    assert {tool.name for tool in tools} == {"nas_grep", "nas_pdfgrep"}
+
+    resources = await mcp.list_resources()
+    assert {str(resource.uri) for resource in resources} == {"resource://nas/data"}
 
 
 async def test_read_file_via_mcp_client() -> None:
