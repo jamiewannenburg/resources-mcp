@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-from fastmcp import Client
+from fastmcp import Client, FastMCP
 
 import server
 from tests.conftest import call_tool
@@ -72,9 +72,57 @@ def test_data_directory_listing(populated_data_dir: Path) -> None:
     assert "subdir/nested.json" in paths
 
 
+async def test_mcp_resource_contract() -> None:
+    resources = await server.mcp.list_resources()
+    resources_by_uri = {str(resource.uri): resource for resource in resources}
+
+    listing = resources_by_uri["resource://data"]
+    assert listing.name == "Data directory listing"
+    assert listing.mime_type == "application/json"
+
+    templates = await server.mcp.list_resource_templates()
+    templates_by_uri = {template.uri_template: template for template in templates}
+
+    file_template = templates_by_uri["data://files/{filepath*}"]
+    assert file_template.name == "read_file"
+    assert file_template.parameters["required"] == ["filepath"]
+    assert file_template.parameters["properties"]["filepath"]["type"] == "string"
+
+
+async def test_registered_file_resources_include_size(
+    populated_data_dir: Path,
+    monkeypatch,
+) -> None:
+    file_mcp = FastMCP("file-resource-test")
+    monkeypatch.setattr(server, "mcp", file_mcp)
+
+    count = server.register_file_resources()
+
+    assert count == 3
+    resources = await file_mcp.list_resources()
+    resources_by_uri = {str(resource.uri): resource for resource in resources}
+
+    hello = resources_by_uri["data://files/hello.txt"]
+    assert hello.name == "hello.txt"
+    assert hello.mime_type == "text/plain"
+    assert hello.size == (populated_data_dir / "hello.txt").stat().st_size
+
+    nested = resources_by_uri["data://files/subdir/nested.json"]
+    assert nested.mime_type == "application/json"
+    assert nested.size == (populated_data_dir / "subdir" / "nested.json").stat().st_size
+
+
 def test_read_file_returns_text(populated_data_dir: Path) -> None:
     content = server.read_file("hello.txt")
     assert content == "Hello from test\nsecond line\n"
+
+
+def test_read_file_returns_bytes_for_binary(data_dir: Path) -> None:
+    (data_dir / "blob.bin").write_bytes(b"\x00\x01\x02")
+
+    content = server.read_file("blob.bin")
+
+    assert content == b"\x00\x01\x02"
 
 
 def test_read_file_missing_file_raises(populated_data_dir: Path) -> None:
@@ -108,6 +156,30 @@ async def test_server_exposes_search_tools() -> None:
         assert {f"{prefix}grep", f"{prefix}pdfgrep"} <= names
     else:
         assert {"grep", "pdfgrep"} <= names
+
+
+async def test_mcp_tool_contracts() -> None:
+    tools = await server.mcp.list_tools()
+    tools_by_name = {tool.name: tool for tool in tools}
+    prefix = f"{server.NAMESPACE}_" if server.NAMESPACE else ""
+
+    grep = tools_by_name[f"{prefix}grep"]
+    assert grep.parameters["required"] == ["pattern"]
+    assert grep.parameters["additionalProperties"] is False
+    assert grep.parameters["properties"]["output_mode"]["enum"] == [
+        "content",
+        "files_with_matches",
+        "count",
+    ]
+    assert grep.parameters["properties"]["case_insensitive"]["type"] == "boolean"
+    assert grep.output_schema["properties"]["result"]["type"] == "string"
+
+    pdfgrep = tools_by_name[f"{prefix}pdfgrep"]
+    assert pdfgrep.parameters["required"] == ["pattern"]
+    assert pdfgrep.parameters["additionalProperties"] is False
+    assert pdfgrep.parameters["properties"]["recursive"]["default"] is True
+    assert pdfgrep.parameters["properties"]["page_numbers"]["default"] is True
+    assert pdfgrep.output_schema["properties"]["result"]["type"] == "string"
 
 
 @pytest.mark.usefixtures("require_rg")
