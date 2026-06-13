@@ -167,6 +167,17 @@ filesystem path inside the container.
    on that signing account to `${SA_EMAIL}` instead. The signing account also
    needs `roles/storage.objectViewer` on the bucket.
 
+   For local tests that use Application Default Credentials from
+   `gcloud auth application-default login`, grant the same Token Creator role to
+   your user account on the signing service account:
+
+   ```bash
+   gcloud iam service-accounts add-iam-policy-binding SIGNING_SERVICE_ACCOUNT_EMAIL \
+     --project=PROJECT_ID \
+     --member="user:YOUR_EMAIL@example.com" \
+     --role="roles/iam.serviceAccountTokenCreator"
+   ```
+
 ### Deploy the published image
 
 ```bash
@@ -251,6 +262,16 @@ When the runtime and signing accounts differ, grant
 `roles/iam.serviceAccountTokenCreator` on the signing account to the Cloud Run
 service account. The signing account also needs `roles/storage.objectViewer` on
 the bucket.
+
+When testing locally with user Application Default Credentials, the local user
+also needs permission to sign as `SIGNED_URL_SERVICE_ACCOUNT_EMAIL`:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding SIGNED_URL_SERVICE_ACCOUNT_EMAIL \
+  --project=PROJECT_ID \
+  --member="user:YOUR_EMAIL@example.com" \
+  --role="roles/iam.serviceAccountTokenCreator"
+```
 
 ### Notes on Cloud Storage mounts and search
 
