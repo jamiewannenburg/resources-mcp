@@ -86,6 +86,194 @@ docker build -t resources-mcp .
 docker run --rm -p 8000:8000 -v "$(pwd)/data:/data:ro" resources-mcp
 ```
 
+## Deploy to Google Cloud Run
+
+Cloud Run can run the published Docker image and mount a Cloud Storage bucket at
+`/data`, which is the default `DATA_DIR` used by this server. Cloud Run mounts
+Cloud Storage buckets with Cloud Storage FUSE, so the mounted bucket appears as a
+filesystem path inside the container.
+
+### Prerequisites
+
+1. Install and authenticate the Google Cloud CLI:
+
+   ```bash
+   gcloud auth login
+   gcloud config set project PROJECT_ID
+   ```
+
+2. Enable the required APIs:
+
+   ```bash
+   gcloud services enable run.googleapis.com storage.googleapis.com iamcredentials.googleapis.com
+   ```
+
+3. Create or choose a bucket that contains the files to expose:
+
+   ```bash
+   gcloud storage buckets create gs://BUCKET_NAME --location=REGION
+   gcloud storage cp --recursive ./data/* gs://BUCKET_NAME/
+   ```
+
+4. Choose a service account for Cloud Run:
+
+   Cloud Run runs as a **service identity** (a service account). Set
+   `SA_EMAIL` to the account the service will use.
+
+   **Option A: Dedicated service account (recommended)** — least privilege; only
+   the roles you grant in step 5:
+
+   ```bash
+   gcloud iam service-accounts create resources-mcp \
+     --display-name="resources-mcp Cloud Run"
+
+   SA_EMAIL="resources-mcp@PROJECT_ID.iam.gserviceaccount.com"
+   ```
+
+   Pass this account to Cloud Run with `--service-account="${SA_EMAIL}"`. Your
+   deployer identity needs `roles/iam.serviceAccountUser` on `${SA_EMAIL}`.
+
+   **Option B: Default Compute Engine service account** — Cloud Run uses this
+   identity when you omit `--service-account`. Fewer setup steps, but that
+   account may already have broad project access:
+
+   ```bash
+   PROJECT_NUMBER="$(gcloud projects describe PROJECT_ID --format='value(projectNumber)')"
+
+   SA_EMAIL="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+   ```
+
+5. Grant the service account the permissions it needs:
+
+   **Read the mounted bucket** — required for the Cloud Storage volume mount and
+   for signed download links:
+
+   ```bash
+   gcloud storage buckets add-iam-policy-binding gs://BUCKET_NAME \
+     --member="serviceAccount:${SA_EMAIL}" \
+     --role="roles/storage.objectViewer"
+   ```
+
+   **Sign download URLs** — required when `SIGNED_URL_SERVICE_ACCOUNT_EMAIL` is
+   set. Use the same account for Cloud Run and signing (recommended):
+
+   ```bash
+   gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
+     --member="serviceAccount:${SA_EMAIL}" \
+     --role="roles/iam.serviceAccountTokenCreator"
+   ```
+
+   If a different account signs URLs, grant `roles/iam.serviceAccountTokenCreator`
+   on that signing account to `${SA_EMAIL}` instead. The signing account also
+   needs `roles/storage.objectViewer` on the bucket.
+
+### Deploy the published image
+
+```bash
+gcloud run deploy resources-mcp \
+  --image docker.io/jamiewannenburg/resource-mcp:latest \
+  --region REGION \
+  --port 8000 \
+  --service-account="${SA_EMAIL}" \
+  --set-env-vars DATA_DIR=/data,RECURSIVE=true,SIGNED_URL_BUCKET=BUCKET_NAME,SIGNED_URL_SERVICE_ACCOUNT_EMAIL=${SA_EMAIL} \
+  --add-volume mount-path=/data,type=cloud-storage,bucket=BUCKET_NAME,readonly=true
+```
+
+If you chose the default Compute Engine service account (Option B), omit
+`--service-account`.
+
+By default, keep the service private and grant invoke access only to the callers
+that need it. If you intentionally want a public endpoint, add
+`--allow-unauthenticated`.
+
+After deployment, connect your MCP client to:
+
+```text
+https://SERVICE_URL/mcp
+```
+
+You can get the service URL with:
+
+```bash
+gcloud run services describe resources-mcp \
+  --region REGION \
+  --format='value(status.url)'
+```
+
+### Build and deploy your local source
+
+If you changed the code and want Cloud Run to build the local Dockerfile:
+
+```bash
+gcloud run deploy resources-mcp \
+  --source . \
+  --region REGION \
+  --port 8000 \
+  --service-account="${SA_EMAIL}" \
+  --set-env-vars DATA_DIR=/data,RECURSIVE=true,SIGNED_URL_BUCKET=BUCKET_NAME,SIGNED_URL_SERVICE_ACCOUNT_EMAIL=${SA_EMAIL} \
+  --add-volume mount-path=/data,type=cloud-storage,bucket=BUCKET_NAME,readonly=true
+```
+
+Omit `--service-account` when using the default Compute Engine service account
+(Option B).
+
+### Signed download links
+
+Set `SIGNED_URL_BUCKET` to register the `download_link` tool. If
+`SIGNED_URL_BUCKET` is not set, the tool is not registered.
+
+`download_link` accepts a file path under `/data` and returns a structured
+payload with a temporary V4 signed Cloud Storage URL:
+
+```json
+{
+  "url": "https://storage.googleapis.com/BUCKET_NAME/path/file.pdf?...",
+  "method": "GET",
+  "expires_at": "2026-06-13T12:00:00Z",
+  "expires_seconds": 900,
+  "bucket": "BUCKET_NAME",
+  "object": "path/file.pdf",
+  "path": "path/file.pdf",
+  "content_disposition": "attachment; filename=\"file.pdf\""
+}
+```
+
+The bucket and objects remain private. The signed URL is a bearer URL, so anyone
+with the URL can download that object until it expires.
+
+For Cloud Run, set `SIGNED_URL_SERVICE_ACCOUNT_EMAIL` to the service account that
+should sign URLs. Use the same `${SA_EMAIL}` from step 4 for both
+`--service-account` and `SIGNED_URL_SERVICE_ACCOUNT_EMAIL` (or just
+`SIGNED_URL_SERVICE_ACCOUNT_EMAIL` when using the default Compute Engine service
+account and omitting `--service-account`).
+
+When the runtime and signing accounts differ, grant
+`roles/iam.serviceAccountTokenCreator` on the signing account to the Cloud Run
+service account. The signing account also needs `roles/storage.objectViewer` on
+the bucket.
+
+### Notes on Cloud Storage mounts and search
+
+`grep` and `pdfgrep` should work against a read-only Cloud Storage mount because
+the tools only need normal directory and file reads. The image already includes
+`ripgrep` and `pdfgrep`, and both tools operate on `/data`.
+
+Important limitations:
+
+- Cloud Run uses Cloud Storage FUSE for the mount, so searches over many or large
+  files can be slower than searching a local disk.
+- This server registers file resources at startup. Objects added to the bucket
+  after an instance starts can still be found by direct filesystem searches, but
+  they will not appear in the startup resource list until a new Cloud Run
+  instance starts.
+- Keep the mount read-only for this server. It does not need write access to the
+  bucket.
+
+References:
+
+- [Cloud Run Cloud Storage volume mounts](https://cloud.google.com/run/docs/configuring/services/cloud-storage-volume-mounts)
+- [gcloud run deploy reference](https://cloud.google.com/sdk/gcloud/reference/run/deploy)
+
 ### Publishing to Docker Hub
 
 These are the steps used to publish `jamiewannenburg/resource-mcp:latest` after code changes (including the `NAMESPACE` support).
@@ -138,11 +326,14 @@ volumes:
 
 ### Application settings
 
-| Variable     | Default | Description                                      |
-| ------------ | ------- | ------------------------------------------------ |
-| `DATA_DIR`   | `/data` | Directory whose files are exposed as resources   |
-| `RECURSIVE`  | `true`  | Include subdirectories when listing and indexing |
-| `NAMESPACE`  | *(none)* | Prefix tools and resource URIs to avoid name clashes when multiple MCP servers are combined |
+| Variable                           | Default | Description                                      |
+| ---------------------------------- | ------- | ------------------------------------------------ |
+| `DATA_DIR`                         | `/data` | Directory whose files are exposed as resources   |
+| `RECURSIVE`                        | `true`  | Include subdirectories when listing and indexing |
+| `NAMESPACE`                        | *(none)* | Prefix tools and resource URIs to avoid name clashes when multiple MCP servers are combined |
+| `SIGNED_URL_BUCKET`                | *(none)* | Cloud Storage bucket used by `download_link`; when unset, the tool is not registered |
+| `SIGNED_URL_EXPIRES_SECONDS`       | `900`   | Default signed URL lifetime in seconds, maximum `604800` |
+| `SIGNED_URL_SERVICE_ACCOUNT_EMAIL` | *(none)* | Optional service account email used for IAM-based URL signing on Cloud Run |
 
 ### FastMCP settings
 

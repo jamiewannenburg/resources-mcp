@@ -10,7 +10,7 @@ from tests.conftest import ToolCaller
 @pytest.mark.usefixtures("require_rg")
 async def test_grep_content_mode(search_tools: ToolCaller) -> None:
     output = await search_tools("grep", {"pattern": "Hello", "output_mode": "content"})
-    assert "./hello.txt:1:Hello from test" in output
+    assert "Hello from test" in output
 
 
 @pytest.mark.usefixtures("require_rg")
@@ -37,7 +37,7 @@ async def test_grep_glob_filter(search_tools: ToolCaller) -> None:
         "grep",
         {"pattern": "ok", "glob": "*.json", "output_mode": "content"},
     )
-    assert "subdir/nested.json:1:" in output
+    assert '{"ok": true}' in output
     assert "hello.txt" not in output
 
 

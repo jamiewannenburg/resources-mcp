@@ -14,11 +14,17 @@ from fastmcp.resources import FileResource
 from fastmcp.server.transforms.namespace import Namespace
 from mcp.types import Resource as SDKResource
 from pydantic import Field
+from download_tools import register_download_tools
 from search_tools import register_search_tools
 from typing_extensions import override
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 RECURSIVE = os.environ.get("RECURSIVE", "true").lower() in {"1", "true", "yes"}
+SIGNED_URL_BUCKET = os.environ.get("SIGNED_URL_BUCKET", "").strip() or None
+SIGNED_URL_SERVICE_ACCOUNT_EMAIL = (
+    os.environ.get("SIGNED_URL_SERVICE_ACCOUNT_EMAIL", "").strip() or None
+)
+SIGNED_URL_EXPIRES_SECONDS = int(os.environ.get("SIGNED_URL_EXPIRES_SECONDS", "900"))
 
 
 def _read_namespace() -> str | None:
@@ -140,6 +146,14 @@ def read_file(filepath: str) -> str | bytes:
 
 
 register_search_tools(mcp, DATA_DIR, _safe_resolve)
+download_link_enabled = register_download_tools(
+    mcp,
+    DATA_DIR,
+    _safe_resolve,
+    bucket_name=SIGNED_URL_BUCKET,
+    default_expires_seconds=SIGNED_URL_EXPIRES_SECONDS,
+    service_account_email=SIGNED_URL_SERVICE_ACCOUNT_EMAIL,
+)
 
 registered_files = register_file_resources()
 
